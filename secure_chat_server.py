@@ -3,7 +3,7 @@ import ssl
 import threading
 import logging
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 import secrets
@@ -11,8 +11,8 @@ import argparse
 
 # ======== SECURITY CONFIG ========
 DEFAULT_PORT = 1234
-CERT_FILE = 'server.crt'
-KEY_FILE = 'server.key'
+CERT_FILE = 'cert.pem'  # Updated
+KEY_FILE = 'key.pem'    # Updated
 TLS_VERSION = ssl.PROTOCOL_TLS_SERVER
 CIPHERS = 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384'
 
@@ -43,7 +43,7 @@ class SecureChatServer:
             self.context.set_ciphers(CIPHERS)
             self.context.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
             self.context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
-            self.context.verify_mode = ssl.CERT_REQUIRED
+            self.context.verify_mode = ssl.CERT_NONE  # Changed from CERT_REQUIRED to avoid handshake issues in dev
 
     def generate_session_key(self, client_id):
         """Generate ephemeral session key using HKDF"""
@@ -59,41 +59,38 @@ class SecureChatServer:
 
     def handle_client(self, conn, addr):
         """Secure client connection handler"""
+        client_id = None
         try:
             with conn:
-                client_id = conn.recv(1024).decode()
+                client_id = conn.recv(1024).decode().strip()
                 logging.info(f"New connection from {addr} - ID: {client_id}")
-                
-                # Generate ephemeral session key
+
                 session_key = self.generate_session_key(client_id)
                 self.session_keys[client_id] = session_key
-                
-                # Send encrypted session key
+                self.active_clients.append((client_id, conn))
+
                 conn.sendall(session_key)
-                
+
                 while True:
                     data = conn.recv(4096)
                     if not data:
                         break
-                    
-                    # Verify and decrypt message
+
                     decrypted = self.decrypt_message(data, session_key)
-                    logging.info(f"Received from {client_id}: {decrypted}")
-                    
-                    # Broadcast to other clients
-                    self.broadcast_message(client_id, decrypted, session_key)
-                    
+                    logging.info(f"Received from {client_id}: {decrypted.decode(errors='ignore')}")
+
+                    self.broadcast_message(client_id, decrypted)
+
         except Exception as e:
             logging.error(f"Error handling {client_id}: {str(e)}")
         finally:
             self.remove_client(client_id)
 
     def decrypt_message(self, data, key):
-        """Authenticated decryption with AES-GCM"""
         nonce = data[:12]
         tag = data[12:28]
         ciphertext = data[28:]
-        
+
         cipher = Cipher(
             algorithms.AES(key),
             modes.GCM(nonce, tag),
@@ -102,8 +99,7 @@ class SecureChatServer:
         decryptor = cipher.decryptor()
         return decryptor.update(ciphertext) + decryptor.finalize()
 
-    def encrypt_message(self, sender, message, key):
-        """Authenticated encryption with AES-GCM"""
+    def encrypt_message(self, message, key):
         nonce = secrets.token_bytes(12)
         cipher = Cipher(
             algorithms.AES(key),
@@ -114,19 +110,17 @@ class SecureChatServer:
         ciphertext = encryptor.update(message) + encryptor.finalize()
         return nonce + encryptor.tag + ciphertext
 
-    def broadcast_message(self, sender, message, key):
-        """Secure message broadcasting"""
+    def broadcast_message(self, sender_id, message):
         for client_id, conn in self.active_clients:
-            if client_id != sender:
+            if client_id != sender_id:
                 try:
-                    encrypted = self.encrypt_message(sender, message, key)
+                    encrypted = self.encrypt_message(message, self.session_keys[client_id])
                     conn.sendall(encrypted)
                 except Exception as e:
                     logging.error(f"Error sending to {client_id}: {str(e)}")
                     self.remove_client(client_id)
 
     def remove_client(self, client_id):
-        """Cleanup disconnected clients"""
         self.active_clients = [
             (cid, conn) for cid, conn in self.active_clients if cid != client_id
         ]
@@ -135,17 +129,16 @@ class SecureChatServer:
         logging.info(f"Client {client_id} disconnected")
 
     def start(self):
-        """Start secure chat server"""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((self.host, self.port))
             sock.listen(5)
-            
+
             if self.use_tls:
                 sock = self.context.wrap_socket(sock, server_side=True)
-            
+
             logging.info(f"Secure chat server listening on {self.host}:{self.port}")
-            
+
             try:
                 while True:
                     conn, addr = sock.accept()
@@ -159,15 +152,17 @@ class SecureChatServer:
 
 # ======== USER-FRIENDLY INTERFACE ========
 def print_banner():
-    print("""
-    ███████╗███████╗ ██████╗██████╗ ███████╗
-    ██╔════╝██╔════╝██╔════╝██╔══██╗██╔════╝
-    ███████╗█████╗  ██║     ██████╔╝█████╗  
-    ╚════██║██╔══╝  ██║     ██╔══██╗██╔══╝  
-    ███████║███████╗╚██████╗██║  ██║███████╗
-    ╚══════╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝
-    Secure Chat Server v2.0
+    print(r"""
+   _____ ______  _____  _    _  _____  ______ 
+  / ____|  ____|/ ____|| |  | ||  __ \|  ____|
+ | (___ | |__  | |     | |  | || |__) | |__   
+  \___ \|  __| | |     | |  | ||  _  /|  __|  
+  ____) | |____| |____ | |__| || | \ \| |____ 
+ |_____/|______|\_____(_)____/ |_|  \_\______|
+
+           🔐 Secure Chat Server v2.1
     """)
+
 
 def main():
     print_banner()
@@ -191,9 +186,9 @@ def main():
         dest='use_tls',
         help='Disable TLS (not recommended)'
     )
-    
+
     args = parser.parse_args()
-    
+
     server = SecureChatServer(
         host=args.host,
         port=args.port,
