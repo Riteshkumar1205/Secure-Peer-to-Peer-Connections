@@ -43,17 +43,24 @@ class SecureChatCore:
             'hmac_key': None,
             'sequence': 0
         }
+        self.host = None
+        self.port = DEFAULT_PORT
         self.setup_connection()
 
     def setup_connection(self):
+        self.host = input("Enter server IP (default 127.0.0.1): ") or "127.0.0.1"
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
         context.load_verify_locations(CERT_FILE)
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.secure_sock = context.wrap_socket(
-            self.sock, server_hostname=self.get_server_host()
+            self.sock, server_hostname=self.host
         )
-        self.secure_sock.connect((self.host, self.port))
+
+        try:
+            self.secure_sock.connect((self.host, self.port))
+        except socket.gaierror as e:
+            raise RuntimeError(f"Failed to resolve host '{self.host}': {e}")
 
         shared_secret = os.urandom(32)
         hkdf = HKDF(
@@ -76,11 +83,6 @@ class SecureChatCore:
             'hmac_key': hmac_key
         })
 
-    def get_server_host(self):
-        self.host = input("Enter server IP (default 127.0.0.1): ") or "127.0.0.1"
-        self.port = DEFAULT_PORT
-        return self.host
-
     def encrypt_message(self, plaintext):
         encryptor = self.security_context['cipher'].encryptor()
         ciphertext = encryptor.update(plaintext) + encryptor.finalize()
@@ -97,7 +99,12 @@ else:
     class DesktopChat:
         def __init__(self, root):
             self.root = root
-            self.core = SecureChatCore()
+            try:
+                self.core = SecureChatCore()
+            except RuntimeError as e:
+                messagebox.showerror("Connection Error", str(e))
+                root.destroy()
+                return
             self.setup_ui()
             threading.Thread(target=self.receive_messages, daemon=True).start()
 
