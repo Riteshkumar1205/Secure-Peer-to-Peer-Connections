@@ -1,3 +1,8 @@
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--no-tls', action='store_true', help='Disable TLS encryption')
+args = parser.parse_args()
 import sys
 import os
 import socket
@@ -44,7 +49,7 @@ class SecureChatCore:
         self.host = None
         self.port = DEFAULT_PORT
         self.connected = False
-        self.use_tls = True  # Default to TLS
+        self.use_tls = not args.no_tls  # Default to TLS
         self.setup_connection()
 
     def log(self, message):
