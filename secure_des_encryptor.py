@@ -5,6 +5,8 @@ import os
 import hmac
 import hashlib
 from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 # --- UTILITY FUNCTIONS ---
 def str2hex(word):
@@ -89,7 +91,7 @@ def remove_pkcs7_padding(data, block_size=8):
     return unpadder.update(data) + unpadder.finalize()
 
 def generate_hmac(key, data):
-    """Generate HMAC for data integrity"""
+    """Generate HMAC for data integrity using SHA-256"""
     return hmac.new(bytes.fromhex(key), data, hashlib.sha256).digest()
 
 def verify_hmac(key, data, mac):
