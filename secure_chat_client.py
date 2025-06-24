@@ -1,4 +1,3 @@
-# secure_chat_client.py
 import sys
 import os
 import socket
@@ -45,6 +44,7 @@ class SecureChatCore:
         self.host = None
         self.port = DEFAULT_PORT
         self.connected = False
+        self.use_tls = True  # Default to TLS
         self.setup_connection()
 
     def log(self, message):
@@ -58,25 +58,23 @@ class SecureChatCore:
     def setup_connection(self):
         try:
             self.host = input("Enter server IP (default 127.0.0.1): ") or "127.0.0.1"
-            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            context.load_verify_locations(CERT_FILE)
-            context.check_hostname = True
-            context.verify_mode = ssl.CERT_REQUIRED
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
 
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(10)  # 10-second timeout
-            
-            self.secure_sock = context.wrap_socket(
-                self.sock, server_hostname=self.host
-            )
+            if self.use_tls:
+                context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                context.load_verify_locations(CERT_FILE)
+                self.secure_sock = context.wrap_socket(sock, server_hostname=self.host)
+            else:
+                self.secure_sock = sock
 
-            self.log(f"Connecting to {self.host}:{self.port}...")
             self.secure_sock.connect((self.host, self.port))
-            self.log("SSL connection established")
-            
-            # Perform ECDH key exchange
-            self.perform_key_exchange()
+            self.log("Connection established" + (" with TLS" if self.use_tls else " without TLS"))
             self.connected = True
+
+            # Perform key exchange
+            self.perform_key_exchange()
+
         except socket.timeout:
             self.log("Connection timed out")
             raise RuntimeError("Connection to server timed out")
