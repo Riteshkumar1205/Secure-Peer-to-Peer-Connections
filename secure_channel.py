@@ -1,74 +1,103 @@
 import secrets
-from sympy import isprime, nextprime, primitive_root
-
+from sympy import isprime, nextprime
+from math import gcd
+import sys
 
 class ElGamal:
-    def __init__(self, key_size=256):  # 256-bit for demo; increase for real security
+    def __init__(self, key_size=256):
         self.key_size = key_size
         self.public_key, self.private_key = self.generate_keys()
 
-    def generate_keys(self):
-        """Generate secure ElGamal keys"""
-        # Step 1: Generate a large prime q
+    def generate_safe_prime(self):
+        """Generate a safe prime (p = 2q + 1 where q is prime)"""
         while True:
+            # Generate random prime candidate
             candidate = secrets.randbits(self.key_size)
             q = nextprime(candidate)
-            if isprime(q):
-                break
+            
+            # Check if 2q+1 is prime
+            p = 2 * q + 1
+            if p.bit_length() == self.key_size and isprime(p):
+                return p, q
 
-        # Step 2: Find primitive root a modulo q
-        a = primitive_root(q)
+    def find_primitive_root(self, p, q):
+        """Efficiently find a primitive root modulo p for safe prime"""
+        # Factors of p-1 are 2 and q (since p = 2q+1)
+        factors = [2, q]
+        
+        while True:
+            g = secrets.randbelow(p - 2) + 1
+            # Check if g is primitive root
+            if all(pow(g, (p-1)//factor, p) != 1 for factor in factors):
+                return g
 
-        # Step 3: Choose private key XA
-        XA = secrets.randbelow(q - 2) + 1
-
-        # Step 4: Compute public key YA = a^XA mod q
-        YA = pow(a, XA, q)
-
-        return {'q': q, 'a': a, 'YA': YA}, {'XA': XA, 'q': q}
+    def generate_keys(self):
+        """Generate secure ElGamal keys using safe primes"""
+        p, q = self.generate_safe_prime()
+        a = self.find_primitive_root(p, q)
+        
+        # Choose private key (1 < XA < p-1)
+        XA = secrets.randbelow(p - 2) + 1
+        YA = pow(a, XA, p)
+        
+        return {'p': p, 'a': a, 'YA': YA}, {'XA': XA, 'p': p}
 
     def encrypt(self, message):
         """Encrypt message using public key"""
-        q, a, YA = self.public_key['q'], self.public_key['a'], self.public_key['YA']
-
+        p, a, YA = self.public_key['p'], self.public_key['a'], self.public_key['YA']
+        
+        # Convert message to integer
         if not isinstance(message, bytes):
             message = message.encode('utf-8')
-
         m = int.from_bytes(message, 'big')
-        if m >= q:
-            raise ValueError("Message too large for current key size.")
-
-        k = secrets.randbelow(q - 2) + 1
-        C1 = pow(a, k, q)
-        K = pow(YA, k, q)
-        C2 = (K * m) % q
-
+        
+        # Validate message size
+        if m >= p:
+            raise ValueError(f"Message too large for key size (max {p.bit_length()-1} bits)")
+        
+        # Encryption
+        k = secrets.randbelow(p - 2) + 1
+        C1 = pow(a, k, p)
+        K = pow(YA, k, p)
+        C2 = (K * m) % p
+        
         return (C1, C2)
 
     def decrypt(self, ciphertext):
         """Decrypt ciphertext using private key"""
         C1, C2 = ciphertext
-        XA, q = self.private_key['XA'], self.private_key['q']
-
-        K = pow(C1, XA, q)
-        K_inv = pow(K, -1, q)  # Modular inverse
-        m = (C2 * K_inv) % q
-
+        XA, p = self.private_key['XA'], self.private_key['p']
+        
+        # Compute shared secret
+        K = pow(C1, XA, p)
+        
+        # Modular inverse for decryption
+        K_inv = pow(K, -1, p)
+        m = (C2 * K_inv) % p
+        
+        # Convert back to bytes
         byte_len = (m.bit_length() + 7) // 8
+        decrypted_bytes = m.to_bytes(byte_len, 'big')
+        
+        # Try UTF-8 decoding, return bytes if fails
         try:
-            return m.to_bytes(byte_len, 'big').decode('utf-8')
+            return decrypted_bytes.decode('utf-8')
         except UnicodeDecodeError:
-            return "[Decryption error: invalid UTF-8 message]"
+            return decrypted_bytes
 
 # ================== USAGE EXAMPLE ==================
 if __name__ == "__main__":
-    elgamal = ElGamal()
+    # Use 128-bit keys for faster demo while maintaining security
+    elgamal = ElGamal(128)
 
     message = "Secret message"
     print(f"Original message: {message}")
 
-    ciphertext = elgamal.encrypt(message)
-    print(f"Ciphertext: {ciphertext}")
-
-    decrypted = elgamal.decrypt(ciphertext)
-    print(f"Decrypted message: {decrypted}")
+    try:
+        ciphertext = elgamal.encrypt(message)
+        print(f"Ciphertext (C1, C2): {ciphertext}")
+        
+        decrypted = elgamal.decrypt(ciphertext)
+        print(f"Decrypted message: {decrypted}")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
