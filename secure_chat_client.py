@@ -36,7 +36,7 @@ else:
 
 # ======== SECURITY CONFIG ========
 DEFAULT_PORT = 8443
-CERT_FILE = './server.crt'
+CA_CERT_FILE = './ca.crt'    # <-- Use CA cert here, not server.crt
 SESSION_KEY_SIZE = 32  # 256-bit
 
 class SecureChatCore:
@@ -70,8 +70,8 @@ class SecureChatCore:
 
             if self.use_tls:
                 context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                context.load_verify_locations(CERT_FILE)
-                context.check_hostname = True       # Enforce hostname checking
+                context.load_verify_locations(CA_CERT_FILE)
+                context.check_hostname = False  # Disable hostname check for self-signed or local certs
                 context.verify_mode = ssl.CERT_REQUIRED
 
                 # Wrap socket before connect to enable SNI and verification
