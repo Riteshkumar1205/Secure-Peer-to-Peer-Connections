@@ -103,22 +103,22 @@ class SecureChatCore:
         """Perform ECDH key exchange for perfect forward secrecy"""
         private_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
         public_key = private_key.public_key()
-        
+
         pub_bytes = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         self.secure_sock.sendall(pub_bytes)
         self.log("Sent public key to server")
-        
+
         server_pub_bytes = self.secure_sock.recv(4096)
         server_public_key = serialization.load_pem_public_key(
             server_pub_bytes, backend=default_backend()
         )
         self.log("Received server's public key")
-        
+
         shared_secret = private_key.exchange(ec.ECDH(), server_public_key)
-        
+
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=SESSION_KEY_SIZE,
@@ -127,14 +127,14 @@ class SecureChatCore:
             backend=default_backend()
         )
         session_key = hkdf.derive(shared_secret)
-        
+
         self.security_context['aes_key'] = session_key
         self.log("Session keys established")
 
     def encrypt_message(self, plaintext):
         if not self.security_context['aes_key']:
             raise RuntimeError("Encryption key not established")
-            
+
         aesgcm = AESGCM(self.security_context['aes_key'])
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, plaintext, None)
@@ -143,10 +143,10 @@ class SecureChatCore:
     def decrypt_message(self, data):
         if not self.security_context['aes_key']:
             raise RuntimeError("Decryption key not established")
-            
+
         if len(data) < 12 + 16:
             raise ValueError("Invalid ciphertext length")
-            
+
         nonce = data[:12]
         ciphertext = data[12:]
         aesgcm = AESGCM(self.security_context['aes_key'])
